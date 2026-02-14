@@ -1,0 +1,39 @@
+# Виртуальное окружение
+.venv/
+venv/
+env/
+ENV/
+
+# Файлы Python
+__pycache__/
+*.py[cod]
+*.so
+.Python
+
+# Загруженные пользователем файлы
+uploads/
+!uploads/.gitkeep   # если хочешь сохранить пустую папку uploads
+
+# Файлы конфигурации с секретами
+.env
+*.env
+
+# Базы данных
+*.db
+*.sqlite3
+
+# IDE
+.vscode/
+.idea/
+
+# Логи
+*.log
+
+# Файлы установки pip
+Pipfile.lock
+poetry.lock
+
+# Директория с собранными пакетами
+dist/
+build/
+*.egg-info/
