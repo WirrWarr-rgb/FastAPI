@@ -88,27 +88,19 @@ recipe_counter = 0
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print("🚀 Запуск приложения...")
+    print("Запуск приложения...")
     async with db_helper.engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    print("✅ База данных готова")
+    print("База данных готова")
     
     yield
-    print("🛑 Остановка приложения...")
+    print("Остановка приложения...")
     await db_helper.dispose()
-    print("✅ Ресурсы освобождены")
+    print("Ресурсы освобождены")
 
 main_app = FastAPI(
     title="API для рецептов",
-    description="""
-    🍳 API для управления рецептами с примерами из документации FastAPI
-    
-    ## Возможности:
-    * Управление рецептами (CRUD)
-    * Загрузка изображений
-    * Различные форматы ответов (JSON/HTML)
-    * Примеры из документации FastAPI
-    """,
+    description="API для управления рецептами с примерами из документации FastAPI",
     version="1.0.0",
     lifespan=lifespan,
 )
@@ -132,41 +124,8 @@ async def root():
                 padding: 20px;
                 background: #f5f5f5;
             }
-            .container {
-                background: white;
-                padding: 30px;
-                border-radius: 10px;
-                box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-            }
-            h1 { color: #2c3e50; border-bottom: 3px solid #3498db; padding-bottom: 10px; }
+            h1 { color: #2c3e50; padding-bottom: 10px; }
             h2 { color: #34495e; margin-top: 30px; }
-            .card {
-                background: #f8f9fa;
-                border-left: 4px solid #3498db;
-                padding: 15px;
-                margin: 15px 0;
-                border-radius: 0 5px 5px 0;
-            }
-            .endpoint {
-                background: #fff;
-                border: 1px solid #ddd;
-                padding: 10px 15px;
-                margin: 10px 0;
-                border-radius: 5px;
-                font-family: monospace;
-            }
-            .method {
-                display: inline-block;
-                padding: 3px 8px;
-                border-radius: 3px;
-                color: white;
-                font-weight: bold;
-                margin-right: 10px;
-            }
-            .get { background: #61affe; }
-            .post { background: #49cc90; }
-            .put { background: #fca130; }
-            .delete { background: #f93e3e; }
             a {
                 color: #3498db;
                 text-decoration: none;
@@ -190,96 +149,16 @@ async def root():
     </head>
     <body>
         <div class="container">
-            <h1>🍳 API для рецептов</h1>
-            <p>Добро пожаловать в API для управления рецептами! Все маршруты успешно загружены.</p>
-            
-            <a href="/docs" class="button">📚 Swagger UI</a>
-            <a href="/redoc" class="button">📖 ReDoc</a>
-            
-            <h2>📋 Часть A: Примеры из документации FastAPI</h2>
-            
-            <div class="card">
-                <h3>Body параметры</h3>
-                <div class="endpoint"><span class="method post">POST</span> /examples/body/</div>
-            </div>
-            
-            <div class="card">
-                <h3>Query параметры с валидацией</h3>
-                <div class="endpoint"><span class="method get">GET</span> /examples/query-validation/</div>
-            </div>
-            
-            <div class="card">
-                <h3>Path параметры с валидацией</h3>
-                <div class="endpoint"><span class="method get">GET</span> /examples/path-validation/{item_id}</div>
-            </div>
-            
-            <div class="card">
-                <h3>Query модель</h3>
-                <div class="endpoint"><span class="method get">GET</span> /examples/query-model/</div>
-            </div>
-            
-            <div class="card">
-                <h3>Вложенные модели</h3>
-                <div class="endpoint"><span class="method post">POST</span> /examples/nested-models/</div>
-            </div>
-            
-            <div class="card">
-                <h3>Form данные</h3>
-                <div class="endpoint"><span class="method post">POST</span> /examples/form/</div>
-                <div class="endpoint"><span class="method post">POST</span> /examples/form-model/</div>
-            </div>
-            
-            <div class="card">
-                <h3>Обработка формата ответа</h3>
-                <div class="endpoint"><span class="method get">GET</span> /format-example/?format=json|html</div>
-            </div>
-            
-            <div class="card">
-                <h3>Загрузка изображений</h3>
-                <div class="endpoint"><span class="method post">POST</span> /upload-image/</div>
-            </div>
-            
-            <h2>📝 Часть B: CRUD для рецептов</h2>
-            
-            <div class="card">
-                <h3>Создание рецепта</h3>
-                <div class="endpoint"><span class="method post">POST</span> /recipes/</div>
-            </div>
-            
-            <div class="card">
-                <h3>Получение всех рецептов</h3>
-                <div class="endpoint"><span class="method get">GET</span> /recipes/</div>
-            </div>
-            
-            <div class="card">
-                <h3>Получение рецепта по ID</h3>
-                <div class="endpoint"><span class="method get">GET</span> /recipes/{recipe_id}</div>
-            </div>
-            
-            <div class="card">
-                <h3>Обновление рецепта</h3>
-                <div class="endpoint"><span class="method put">PUT</span> /recipes/{recipe_id}</div>
-            </div>
-            
-            <div class="card">
-                <h3>Удаление рецепта</h3>
-                <div class="endpoint"><span class="method delete">DELETE</span> /recipes/{recipe_id}</div>
-            </div>
-            
-            <h2>🔧 Тестовые маршруты</h2>
-            <div class="card">
-                <div class="endpoint"><span class="method get">GET</span> /test</div>
-            </div>
-            
-            <footer style="margin-top: 40px; text-align: center; color: #7f8c8d;">
-                <p>FastAPI приложение успешно запущено! 🚀</p>
-            </footer>
+            <h1>API для рецептов</h1>
+            <a href="/docs" class="button">Swagger UI</a>
+            <a href="/redoc" class="button">ReDoc</a>
         </div>
     </body>
     </html>
     """
 
-@main_app.post("/examples/body/")
+# Пример Body
+@main_app.post("/examples/body/") #эндоинт
 async def create_item_with_body(
     item: Item, 
     user: User, 
@@ -293,6 +172,7 @@ async def create_item_with_body(
         "message": "Объекты успешно созданы"
     }
 
+# Пример Query Parameters and String Validations
 @main_app.get("/examples/query-validation/")
 async def read_items(
     q: Annotated[
@@ -325,6 +205,7 @@ async def read_items(
         "total": len(items)
     }
 
+# Пример Path Parameters and Numeric Validations
 @main_app.get("/examples/path-validation/{item_id}")
 async def read_item(
     item_id: Annotated[
@@ -345,6 +226,7 @@ async def read_item(
         "description": f"Описание товара {item_id}"
     }
 
+# Пример Query Parameter Models
 @main_app.get("/examples/query-model/")
 async def read_items_with_model(
     filter_query: Annotated[FilterParams, Query()]
@@ -356,6 +238,7 @@ async def read_items_with_model(
         "items": [f"Item {i}" for i in range(filter_query.offset, filter_query.offset + filter_query.limit)]
     }
 
+# Пример Nested Models
 @main_app.post("/examples/nested-models/")
 async def create_product(product: Product):
     """Пример с вложенными моделями"""
@@ -365,6 +248,7 @@ async def create_product(product: Product):
         "total_images": len(product.images) + (1 if product.image else 0)
     }
 
+# Пример Request Forms
 @main_app.post("/examples/form/")
 async def handle_form(
     username: str = Form(..., min_length=3, max_length=20, description="Имя пользователя"),
@@ -378,6 +262,7 @@ async def handle_form(
         "message": "Форма успешно отправлена"
     }
 
+# Пример Request Forms
 @main_app.post("/examples/form-model/")
 async def handle_form_model(form_data: Annotated[FormData, Form()]):
     """Пример с моделью для Form данных"""
@@ -386,6 +271,7 @@ async def handle_form_model(form_data: Annotated[FormData, Form()]):
         "message": "Модель формы успешно обработана"
     }
 
+# Обработка query-параметра format
 @main_app.get("/format-example/")
 async def format_response(
     format: str = Query(
@@ -485,6 +371,7 @@ async def format_response(
     
     return JSONResponse(content=data)
 
+# Загрузка изображений
 @main_app.post("/upload-image/")
 async def upload_image(
     file: UploadFile = File(..., description="Изображение для загрузки (PNG, JPG, WEBP)")
@@ -531,6 +418,9 @@ async def upload_image(
         "message": "Файл успешно загружен"
     }
 
+#CRUD для рецептов
+
+# Create (POST)
 @main_app.post("/recipes/", response_model=Recipe, status_code=201)
 async def create_recipe(recipe: RecipeCreate):
     """Создать новый рецепт"""
@@ -547,6 +437,7 @@ async def create_recipe(recipe: RecipeCreate):
     
     return new_recipe
 
+# Read all (GET)
 @main_app.get("/recipes/", response_model=List[Recipe])
 async def get_all_recipes(
     skip: int = Query(0, ge=0, description="Сколько пропустить"),
@@ -561,6 +452,7 @@ async def get_all_recipes(
     
     return all_recipes[skip:skip + limit]
 
+# Reade one (GET)
 @main_app.get("/recipes/{recipe_id}", response_model=Recipe)
 async def get_recipe(recipe_id: int):
     """Получить рецепт по ID"""
@@ -571,6 +463,7 @@ async def get_recipe(recipe_id: int):
         )
     return recipes_db[recipe_id]
 
+# Update (PUT)
 @main_app.put("/recipes/{recipe_id}", response_model=Recipe)
 async def update_recipe(recipe_id: int, recipe_update: RecipeUpdate):
     """Обновить рецепт"""
@@ -589,6 +482,7 @@ async def update_recipe(recipe_id: int, recipe_update: RecipeUpdate):
     
     return updated_recipe
 
+#Delete (DELETE)
 @main_app.delete("/recipes/{recipe_id}", status_code=204)
 async def delete_recipe(recipe_id: int):
     """Удалить рецепт"""
@@ -605,7 +499,7 @@ async def delete_recipe(recipe_id: int):
 async def test_endpoint():
     """Простой тестовый маршрут"""
     return {
-        "message": "✅ API работает правильно!",
+        "message": "API работает правильно!",
         "status": "ok",
         "timestamp": datetime.now().isoformat(),
         "endpoints": {
@@ -619,8 +513,8 @@ async def test_endpoint():
 main_app.include_router(api_router)
 
 if __name__ == "__main__":
-    print("🚀 Запуск FastAPI приложения...")
-    print(f"📚 Документация будет доступна по адресу: http://{settings.run.host}:{settings.run.port}/docs")
+    print("Запуск FastAPI приложения...")
+    print(f"Документация будет доступна по адресу: http://{settings.run.host}:{settings.run.port}/docs")
     uvicorn.run(
         "main:main_app",
         host=settings.run.host,
