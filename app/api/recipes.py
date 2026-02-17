@@ -117,12 +117,9 @@ async def update(
             detail=f"Recipe with id {id} not found"
         )
     
-    # Обновляем только переданные поля
     update_data = recipe_update.model_dump(exclude_unset=True)
     for field, value in update_data.items():
         setattr(recipe, field, value)
-    
-    # updated_at обновится автоматически через onupdate в модели
     
     await session.commit()
     await session.refresh(recipe)
