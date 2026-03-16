@@ -6,9 +6,12 @@ class Cuisine(Base):
     __tablename__ = "cuisines"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(String(100), unique=True)
+    name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
 
-    recipes: Mapped[list["Recipe"]] = relationship(back_populates="cuisine")
+    recipes: Mapped[list["Recipe"]] = relationship(
+        back_populates="cuisine",
+        cascade="all, delete-orphan"
+    )
 
     def __repr__(self):
         return f"<Cuisine(id={self.id}, name={self.name})>"

@@ -51,28 +51,34 @@ async def store(
 
 @router.get("/{id}", response_model=PostRead)
 async def show(
-    session: Annotated[
-        AsyncSession,
-        Depends(db_helper.session_getter),
-    ],
+    session: Annotated[AsyncSession, Depends(db_helper.session_getter)],
     id: int,
 ):
     post = await session.get(Post, id)
+    if not post:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, 
+            detail=f"Post with id {id} not found"
+        )
     return post
 
 
 @router.put("/{id}", response_model=PostRead)
 async def update(
-    session: Annotated[
-        AsyncSession,
-        Depends(db_helper.session_getter),
-    ],
+    session: Annotated[AsyncSession, Depends(db_helper.session_getter)],
     id: int,
     post_update: PostCreate,
 ):
     post = await session.get(Post, id)
+    if not post:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, 
+            detail=f"Post with id {id} not found"
+        )
     post.title = post_update.title
+    post.descr = post_update.descr
     await session.commit()
+    await session.refresh(post)
     return post
 
 

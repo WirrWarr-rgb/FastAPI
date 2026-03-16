@@ -6,10 +6,11 @@ class Ingredient(Base):
     __tablename__ = "ingredients"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(String(100), unique=True)
+    name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
 
     recipe_ingredients: Mapped[list["RecipeIngredient"]] = relationship(
-        back_populates="ingredient"
+        back_populates="ingredient",
+        cascade="all, delete-orphan"
     )
 
     def __repr__(self):
