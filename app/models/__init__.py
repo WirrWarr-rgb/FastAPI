@@ -8,6 +8,8 @@ __all__ = (
     "RecipeAllergens",
     "RecipeIngredient",
     "MeasurementEnum",
+    "User",
+    "AccessToken",
 )
 
 # Database
@@ -22,3 +24,7 @@ from .ingredient import Ingredient
 
 # Enums
 from .enums import MeasurementEnum
+
+# Auth models
+from .users import User
+from .access_token import AccessToken

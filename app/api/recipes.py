@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError
 
-from models import db_helper, Recipe, Cuisine, Allergen, Ingredient, RecipeIngredient, MeasurementEnum, RecipeAllergens
+from models import db_helper, Recipe, Cuisine, Allergen, Ingredient, RecipeIngredient, MeasurementEnum, RecipeAllergens, User
 from config import settings
 
 from fastapi_filter import FilterDepends, with_prefix
@@ -15,6 +15,8 @@ from fastapi_filter.contrib.sqlalchemy import Filter
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import paginate
 from typing import Optional, List, Annotated
+
+from authentication.fastapi_users import current_active_user
 
 router = APIRouter(
     tags=["Recipes"],
@@ -76,6 +78,14 @@ class RecipeUpdate(BaseModel):
     difficulty: Optional[int] = Field(None, ge=1, le=5)
     cuisine_id: Optional[int] = None
 
+class AuthorRead(BaseModel):
+    id: int
+    email: str
+    # можно добавить другие поля, если нужно
+    # is_active: bool
+    
+    model_config = ConfigDict(from_attributes=True)
+
 # чтение рецепта
 class RecipeRead(BaseModel):
     id: int
@@ -87,6 +97,7 @@ class RecipeRead(BaseModel):
     cuisine: CuisineRead
     allergens: List[AllergenRead]
     ingredients: List[RecipeIngredientRead]
+    author: AuthorRead  # !!!новое поле!!!
     
     model_config = ConfigDict(
         from_attributes=True
@@ -155,6 +166,7 @@ class RecipeFilter(Filter):
 async def store(
     session: Annotated[AsyncSession, Depends(db_helper.session_getter)],
     recipe_create: RecipeCreate,
+    current_user: Annotated[User, Depends(current_active_user)],
 ):
     # проверка существования кухни
     cuisine = await session.get(Cuisine, recipe_create.cuisine_id)
@@ -186,6 +198,7 @@ async def store(
         cooking_time=recipe_create.cooking_time,
         difficulty=recipe_create.difficulty,
         cuisine_id=recipe_create.cuisine_id,
+        author_id=current_user.id,
     )
     session.add(recipe)
     await session.flush()
@@ -216,6 +229,7 @@ async def store(
             selectinload(Recipe.cuisine),
             selectinload(Recipe.allergens),
             selectinload(Recipe.recipe_ingredients).selectinload(RecipeIngredient.ingredient),
+            selectinload(Recipe.author),
         )
     )
     
@@ -282,6 +296,7 @@ async def index(
             selectinload(Recipe.cuisine),
             selectinload(Recipe.allergens),
             selectinload(Recipe.recipe_ingredients).selectinload(RecipeIngredient.ingredient),
+            selectinload(Recipe.author),
         )
     )
     
@@ -323,7 +338,11 @@ async def index(
                     "measurement": ri.measurement
                 }
                 for ri in recipe.recipe_ingredients
-            ]
+            ],
+            "author": {
+                "id": recipe.author.id,
+                "email": recipe.author.email,
+            } if recipe.author else None,
         }
         items.append(recipe_data)
     
@@ -354,6 +373,7 @@ async def show(
             selectinload(Recipe.cuisine),
             selectinload(Recipe.allergens),
             selectinload(Recipe.recipe_ingredients).selectinload(RecipeIngredient.ingredient),
+            selectinload(Recipe.author),
         )
     )
     result = await session.execute(stmt)
@@ -396,6 +416,7 @@ async def update(
     session: Annotated[AsyncSession, Depends(db_helper.session_getter)],
     id: int,
     recipe_update: RecipeUpdate,
+    current_user: Annotated[User, Depends(current_active_user)],
 ):
     """
     Обновить информацию о рецепте.
@@ -416,6 +437,7 @@ async def update(
             selectinload(Recipe.cuisine),
             selectinload(Recipe.allergens),
             selectinload(Recipe.recipe_ingredients).selectinload(RecipeIngredient.ingredient),
+            selectinload(Recipe.author),
         )
     )
     result = await session.execute(stmt)
@@ -423,6 +445,13 @@ async def update(
     
     if not recipe:
         raise HTTPException(status_code=404, detail="Recipe not found")
+
+    # только автор может обновлять
+    if recipe.author_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You are not the author of this recipe"
+        )
 
     # если обновляем cuisine_id, проверяем существование кухни
     if recipe_update.cuisine_id is not None and recipe_update.cuisine_id != recipe.cuisine_id:
@@ -495,6 +524,7 @@ async def update(
 async def destroy(
     session: Annotated[AsyncSession, Depends(db_helper.session_getter)],
     id: int,
+    current_user: Annotated[User, Depends(current_active_user)],
 ):
     """
     Удалить рецепт по ID.
@@ -505,6 +535,13 @@ async def destroy(
     if not recipe:
         raise HTTPException(status_code=404, detail="Recipe not found")
     
+    # только автор может удалять
+    if recipe.author_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You are not the author of this recipe"
+        )
+
     try:
         await session.delete(recipe)
         await session.commit()

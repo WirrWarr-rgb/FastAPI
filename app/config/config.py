@@ -6,6 +6,7 @@ from pydantic_settings import (
     SettingsConfigDict,
 )
 from pathlib import Path
+from typing import Literal
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -29,7 +30,26 @@ class UrlPrefix(BaseModel):
     allergens: str = "/allergens"
     ingredients: str = "/ingredients"
     recipes: str = "/recipes"
+    auth: str = "/auth"
+    users: str = "/users"
 
+    @property
+    def bearer_token_url(self) -> str:
+        # api/auth/login
+        parts = (self.prefix, self.auth, "/login")
+        path = "".join(parts)
+        return path.removeprefix("/")
+
+class AuthConfig(BaseModel):
+    cookie_max_age: int = 3600
+    cookie_secure: bool = False
+    cookie_samesite: Literal["lax", "strict", "none"] = "lax"
+
+
+class AccessToken(BaseModel):
+    lifetime_seconds: int = 3600
+    reset_password_token_secret: str
+    verification_token_secret: str
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -45,6 +65,7 @@ class Settings(BaseSettings):
     url: UrlPrefix = UrlPrefix()
     db: DatabaseConfig
     base_dir: Path = BASE_DIR
-
+    auth: AuthConfig = AuthConfig()
+    access_token: AccessToken
 
 settings = Settings()

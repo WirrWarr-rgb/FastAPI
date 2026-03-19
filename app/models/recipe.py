@@ -1,6 +1,10 @@
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy import String, Text, Integer, ForeignKey
 from .base import Base
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .users import User  # чтобы избежать циклических импортов
 
 class RecipeAllergens(Base):
     __tablename__ = "recipe_allergens"
@@ -51,9 +55,13 @@ class Recipe(Base):
         nullable=False
     )
 
-    cuisine: Mapped["Cuisine"] = relationship(
-        back_populates="recipes"
+    # добавляем связь с пользователем
+    author_id: Mapped[int] = mapped_column(
+        ForeignKey("user.id", ondelete="CASCADE"),  # "user.id" - единственное число
+        nullable=False
     )
+
+    cuisine: Mapped["Cuisine"] = relationship(back_populates="recipes")
     allergens: Mapped[list["Allergen"]] = relationship(
         secondary="recipe_allergens",
         back_populates="recipes"
@@ -62,6 +70,9 @@ class Recipe(Base):
         back_populates="recipe",
         cascade="all, delete-orphan"
     )
+    
+    # связь с пользователем
+    author: Mapped["User"] = relationship(back_populates="recipes")
 
     def __repr__(self):
         return f"<Recipe(id={self.id}, title={self.title})>"
