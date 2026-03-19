@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError
 
-from models import db_helper, Recipe, Cuisine, Allergen, Ingredient, RecipeIngredient, MeasurementEnum
+from models import db_helper, Recipe, Cuisine, Allergen, Ingredient, RecipeIngredient, MeasurementEnum, RecipeAllergens
 from config import settings
 
 router = APIRouter(
@@ -15,7 +15,7 @@ router = APIRouter(
     prefix=settings.url.recipes,
 )
 
-# Схемы для вложенных объектов
+# схемы для вложенных объектов
 class CuisineRead(BaseModel):
     id: int
     name: str
@@ -24,7 +24,7 @@ class AllergenRead(BaseModel):
     id: int
     name: str
 
-# Для создания ингредиента в рецепте
+# для создания ингредиента в рецепте
 class RecipeIngredientCreate(BaseModel):
     ingredient_id: int = Field(..., alias="id")
     quantity: int
@@ -39,19 +39,18 @@ class RecipeIngredientCreate(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
-# Для отображения ингредиента в рецепте
+# для отображения ингредиента в рецепте
 class RecipeIngredientRead(BaseModel):
-    id: int = Field(..., alias="ingredient_id")
+    id: int
     name: str
     quantity: int
     measurement: int
     
     model_config = ConfigDict(
-        from_attributes=True,
-        populate_by_name=True
+        from_attributes=True
     )
 
-# Создание рецепта
+# создание рецепта
 class RecipeCreate(BaseModel):
     title: str = Field(..., min_length=3, max_length=100)
     description: Optional[str] = Field(None, max_length=500)
@@ -62,7 +61,7 @@ class RecipeCreate(BaseModel):
     allergen_ids: List[int] = Field(default_factory=list)
     ingredients: List[RecipeIngredientCreate]
 
-# Обновление рецепта (только простые поля)
+# обновление рецепта (только простые поля)
 class RecipeUpdate(BaseModel):
     title: Optional[str] = Field(None, min_length=3, max_length=100)
     description: Optional[str] = Field(None, max_length=500)
@@ -71,7 +70,7 @@ class RecipeUpdate(BaseModel):
     difficulty: Optional[int] = Field(None, ge=1, le=5)
     cuisine_id: Optional[int] = None
 
-# Чтение рецепта
+# чтение рецепта
 class RecipeRead(BaseModel):
     id: int
     title: str
@@ -83,7 +82,9 @@ class RecipeRead(BaseModel):
     allergens: List[AllergenRead]
     ingredients: List[RecipeIngredientRead]
     
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(
+        from_attributes=True
+    )
     
 # ----- CRUD для рецептов -----
 
@@ -92,24 +93,12 @@ async def store(
     session: Annotated[AsyncSession, Depends(db_helper.session_getter)],
     recipe_create: RecipeCreate,
 ):
-    """
-    Создать новый рецепт.
-    
-    - **title**: название рецепта
-    - **description**: описание рецепта (необязательно)
-    - **instructions**: инструкция по приготовлению
-    - **cooking_time**: время приготовления в минутах
-    - **difficulty**: сложность от 1 до 5
-    - **cuisine_id**: ID кухни
-    - **allergen_ids**: список ID аллергенов
-    - **ingredients**: список ингредиентов с количеством и единицами измерения
-    """
-    # Проверка существования кухни
+    # проверка существования кухни
     cuisine = await session.get(Cuisine, recipe_create.cuisine_id)
     if not cuisine:
         raise HTTPException(status_code=404, detail="Cuisine not found")
 
-    # Проверка аллергенов
+    # проверка аллергенов
     allergens = []
     if recipe_create.allergen_ids:
         stmt = select(Allergen).where(Allergen.id.in_(recipe_create.allergen_ids))
@@ -118,7 +107,7 @@ async def store(
         if len(allergens) != len(recipe_create.allergen_ids):
             raise HTTPException(status_code=404, detail="One or more allergens not found")
 
-    # Проверка ингредиентов
+    # проверка ингредиентов
     ingredient_ids = [item.ingredient_id for item in recipe_create.ingredients]
     stmt = select(Ingredient).where(Ingredient.id.in_(ingredient_ids))
     result = await session.scalars(stmt)
@@ -126,7 +115,7 @@ async def store(
     if len(ingredients_db) != len(ingredient_ids):
         raise HTTPException(status_code=404, detail="One or more ingredients not found")
 
-    # Создание рецепта
+    # создание рецепта
     recipe = Recipe(
         title=recipe_create.title,
         description=recipe_create.description,
@@ -138,11 +127,13 @@ async def store(
     session.add(recipe)
     await session.flush()
 
-    # Добавление аллергенов
+    # добавление аллергенов через промежуточную таблицу
     if allergens:
-        recipe.allergens.extend(allergens)
+        for allergen in allergens:
+            ra = RecipeAllergens(recipe_id=recipe.id, allergen_id=allergen.id)
+            session.add(ra)
 
-    # Добавление ингредиентов
+    # добавление ингредиентов
     for item in recipe_create.ingredients:
         ri = RecipeIngredient(
             recipe_id=recipe.id,
@@ -152,16 +143,9 @@ async def store(
         )
         session.add(ri)
 
-    try:
-        await session.commit()
-    except IntegrityError:
-        await session.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Error creating recipe. Please check your data."
-        )
-
-    # Перезагрузка рецепта со связанными данными для ответа
+    await session.commit()
+    
+    # загрузка рецепта со всеми связями
     stmt = (
         select(Recipe)
         .where(Recipe.id == recipe.id)
@@ -171,9 +155,38 @@ async def store(
             selectinload(Recipe.recipe_ingredients).selectinload(RecipeIngredient.ingredient),
         )
     )
+    
     result = await session.execute(stmt)
-    recipe = result.scalar_one()
-    return recipe
+    recipe_with_relations = result.scalar_one()
+    
+    # ручное преобразование данных в нужный формат
+    recipe_data = {
+        "id": recipe_with_relations.id,
+        "title": recipe_with_relations.title,
+        "description": recipe_with_relations.description,
+        "instructions": recipe_with_relations.instructions,
+        "cooking_time": recipe_with_relations.cooking_time,
+        "difficulty": recipe_with_relations.difficulty,
+        "cuisine": {
+            "id": recipe_with_relations.cuisine.id,
+            "name": recipe_with_relations.cuisine.name
+        },
+        "allergens": [
+            {"id": a.id, "name": a.name} 
+            for a in recipe_with_relations.allergens
+        ],
+        "ingredients": [
+            {
+                "id": ri.ingredient.id,
+                "name": ri.ingredient.name,
+                "quantity": ri.quantity,
+                "measurement": ri.measurement
+            }
+            for ri in recipe_with_relations.recipe_ingredients
+        ]
+    }
+    
+    return recipe_data
 
 
 @router.get("", response_model=list[RecipeRead])
@@ -195,7 +208,7 @@ async def index(
         .options(
             selectinload(Recipe.cuisine),
             selectinload(Recipe.allergens),
-            selectinload(Recipe.recipe_ingredients),
+            selectinload(Recipe.recipe_ingredients).selectinload(RecipeIngredient.ingredient),
         )
         .order_by(Recipe.id)
     )
@@ -203,7 +216,38 @@ async def index(
         stmt = stmt.where(Recipe.difficulty == difficulty)
     stmt = stmt.offset(skip).limit(limit)
     result = await session.scalars(stmt)
-    return result.all()
+    
+    # преобразование каждого рецепта вручную
+    recipes = []
+    for recipe in result.all():
+        recipe_data = {
+            "id": recipe.id,
+            "title": recipe.title,
+            "description": recipe.description,
+            "instructions": recipe.instructions,
+            "cooking_time": recipe.cooking_time,
+            "difficulty": recipe.difficulty,
+            "cuisine": {
+                "id": recipe.cuisine.id,
+                "name": recipe.cuisine.name
+            },
+            "allergens": [
+                {"id": a.id, "name": a.name} 
+                for a in recipe.allergens
+            ],
+            "ingredients": [
+                {
+                    "id": ri.ingredient.id,
+                    "name": ri.ingredient.name,
+                    "quantity": ri.quantity,
+                    "measurement": ri.measurement
+                }
+                for ri in recipe.recipe_ingredients
+            ]
+        }
+        recipes.append(recipe_data)
+    
+    return recipes
 
 
 @router.get("/{id}", response_model=RecipeRead)
@@ -222,14 +266,42 @@ async def show(
         .options(
             selectinload(Recipe.cuisine),
             selectinload(Recipe.allergens),
-            selectinload(Recipe.recipe_ingredients),
+            selectinload(Recipe.recipe_ingredients).selectinload(RecipeIngredient.ingredient),
         )
     )
     result = await session.execute(stmt)
     recipe = result.scalar_one_or_none()
     if not recipe:
         raise HTTPException(status_code=404, detail="Recipe not found")
-    return recipe
+    
+    # ручное преобразование данных
+    recipe_data = {
+        "id": recipe.id,
+        "title": recipe.title,
+        "description": recipe.description,
+        "instructions": recipe.instructions,
+        "cooking_time": recipe.cooking_time,
+        "difficulty": recipe.difficulty,
+        "cuisine": {
+            "id": recipe.cuisine.id,
+            "name": recipe.cuisine.name
+        },
+        "allergens": [
+            {"id": a.id, "name": a.name} 
+            for a in recipe.allergens
+        ],
+        "ingredients": [
+            {
+                "id": ri.ingredient.id,
+                "name": ri.ingredient.name,
+                "quantity": ri.quantity,
+                "measurement": ri.measurement
+            }
+            for ri in recipe.recipe_ingredients
+        ]
+    }
+    
+    return recipe_data
 
 
 @router.put("/{id}", response_model=RecipeRead)
@@ -249,14 +321,14 @@ async def update(
     - **difficulty**: новая сложность (необязательно)
     - **cuisine_id**: новый ID кухни (необязательно)
     """
-    # Получаем рецепт с загруженными связями
+    # получаем рецепт с загруженными связями
     stmt = (
         select(Recipe)
         .where(Recipe.id == id)
         .options(
             selectinload(Recipe.cuisine),
             selectinload(Recipe.allergens),
-            selectinload(Recipe.recipe_ingredients),
+            selectinload(Recipe.recipe_ingredients).selectinload(RecipeIngredient.ingredient),
         )
     )
     result = await session.execute(stmt)
@@ -265,7 +337,7 @@ async def update(
     if not recipe:
         raise HTTPException(status_code=404, detail="Recipe not found")
 
-    # Если обновляем cuisine_id, проверяем существование кухни
+    # если обновляем cuisine_id, проверяем существование кухни
     if recipe_update.cuisine_id is not None and recipe_update.cuisine_id != recipe.cuisine_id:
         cuisine = await session.get(Cuisine, recipe_update.cuisine_id)
         if not cuisine:
@@ -275,7 +347,7 @@ async def update(
             )
         recipe.cuisine_id = recipe_update.cuisine_id
 
-    # Обновляем только переданные поля
+    # обновление только переданных полей
     update_data = recipe_update.model_dump(exclude_unset=True, exclude={'cuisine_id'})
     for field, value in update_data.items():
         setattr(recipe, field, value)
@@ -289,7 +361,7 @@ async def update(
             detail="Error updating recipe. Please check your data."
         )
     
-    # Перезагружаем рецепт со всеми связями для ответа
+    # перезагрузка рецепта со всеми связями для ответа
     stmt = (
         select(Recipe)
         .where(Recipe.id == id)
@@ -301,7 +373,35 @@ async def update(
     )
     result = await session.execute(stmt)
     recipe = result.scalar_one()
-    return recipe
+    
+    # ручное преобразование данных
+    recipe_data = {
+        "id": recipe.id,
+        "title": recipe.title,
+        "description": recipe.description,
+        "instructions": recipe.instructions,
+        "cooking_time": recipe.cooking_time,
+        "difficulty": recipe.difficulty,
+        "cuisine": {
+            "id": recipe.cuisine.id,
+            "name": recipe.cuisine.name
+        },
+        "allergens": [
+            {"id": a.id, "name": a.name} 
+            for a in recipe.allergens
+        ],
+        "ingredients": [
+            {
+                "id": ri.ingredient.id,
+                "name": ri.ingredient.name,
+                "quantity": ri.quantity,
+                "measurement": ri.measurement
+            }
+            for ri in recipe.recipe_ingredients
+        ]
+    }
+    
+    return recipe_data
 
 
 @router.delete("/{id}", status_code=status.HTTP_204_NO_CONTENT)

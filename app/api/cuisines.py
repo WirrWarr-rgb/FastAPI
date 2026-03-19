@@ -16,22 +16,6 @@ class CuisineRead(BaseModel):
 class CuisineCreate(BaseModel):
     name: str
 
-@router.get("", response_model=list[CuisineRead])
-async def index(
-    session: Annotated[AsyncSession, Depends(db_helper.session_getter)],
-    skip: int = Query(0, ge=0, description="Сколько записей пропустить"),
-    limit: int = Query(100, ge=1, le=100, description="Сколько записей вернуть"),
-):
-    """
-    Получить список всех кухонь с пагинацией.
-    
-    - **skip**: количество записей для пропуска (по умолчанию 0)
-    - **limit**: максимальное количество записей (по умолчанию 100, максимум 100)
-    """
-    stmt = select(Cuisine).order_by(Cuisine.id).offset(skip).limit(limit)
-    result = await session.scalars(stmt)
-    return result.all()
-
 @router.post("", response_model=CuisineRead, status_code=status.HTTP_201_CREATED)
 async def store(
     session: Annotated[AsyncSession, Depends(db_helper.session_getter)],
@@ -69,6 +53,23 @@ async def show(
     if not cuisine:
         raise HTTPException(status_code=404, detail="Cuisine not found")
     return cuisine
+
+@router.get("", response_model=list[CuisineRead])
+async def index(
+    session: Annotated[AsyncSession, Depends(db_helper.session_getter)],
+    skip: int = Query(0, ge=0, description="Сколько записей пропустить"),
+    limit: int = Query(100, ge=1, le=100, description="Сколько записей вернуть"),
+):
+    """
+    Получить список всех кухонь с пагинацией.
+    
+    - **skip**: количество записей для пропуска (по умолчанию 0)
+    - **limit**: максимальное количество записей (по умолчанию 100, максимум 100)
+    """
+    stmt = select(Cuisine).order_by(Cuisine.id).offset(skip).limit(limit)
+    result = await session.scalars(stmt)
+    return result.all()
+
 
 @router.put("/{id}", response_model=CuisineRead)
 async def update(

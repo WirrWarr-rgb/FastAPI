@@ -16,22 +16,6 @@ class AllergenRead(BaseModel):
 class AllergenCreate(BaseModel):
     name: str
 
-@router.get("", response_model=list[AllergenRead])
-async def index(
-    session: Annotated[AsyncSession, Depends(db_helper.session_getter)],
-    skip: int = Query(0, ge=0, description="Сколько записей пропустить"),
-    limit: int = Query(100, ge=1, le=100, description="Сколько записей вернуть"),
-):
-    """
-    Получить список всех аллергенов с пагинацией.
-    
-    - **skip**: количество записей для пропуска (по умолчанию 0)
-    - **limit**: максимальное количество записей (по умолчанию 100, максимум 100)
-    """
-    stmt = select(Allergen).order_by(Allergen.id).offset(skip).limit(limit)
-    result = await session.scalars(stmt)
-    return result.all()
-
 @router.post("", response_model=AllergenRead, status_code=status.HTTP_201_CREATED)
 async def store(
     session: Annotated[AsyncSession, Depends(db_helper.session_getter)],
@@ -54,6 +38,23 @@ async def store(
         )
     await session.refresh(allergen)
     return allergen
+
+
+@router.get("", response_model=list[AllergenRead])
+async def index(
+    session: Annotated[AsyncSession, Depends(db_helper.session_getter)],
+    skip: int = Query(0, ge=0, description="Сколько записей пропустить"),
+    limit: int = Query(100, ge=1, le=100, description="Сколько записей вернуть"),
+):
+    """
+    Получить список всех аллергенов с пагинацией.
+    
+    - **skip**: количество записей для пропуска (по умолчанию 0)
+    - **limit**: максимальное количество записей (по умолчанию 100, максимум 100)
+    """
+    stmt = select(Allergen).order_by(Allergen.id).offset(skip).limit(limit)
+    result = await session.scalars(stmt)
+    return result.all()
 
 @router.get("/{id}", response_model=AllergenRead)
 async def show(

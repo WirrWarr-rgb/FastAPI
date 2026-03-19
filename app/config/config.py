@@ -25,13 +25,10 @@ class DatabaseConfig(BaseModel):
 
 class UrlPrefix(BaseModel):
     prefix: str = "/api"
-    test: str = "/test"
-    posts: str = "/posts"
     cuisines: str = "/cuisines"
     allergens: str = "/allergens"
     ingredients: str = "/ingredients"
     recipes: str = "/recipes"
-    examples: str = "/examples"
 
 
 class Settings(BaseSettings):
