@@ -10,6 +10,12 @@ from sqlalchemy.exc import IntegrityError
 from models import db_helper, Recipe, Cuisine, Allergen, Ingredient, RecipeIngredient, MeasurementEnum, RecipeAllergens
 from config import settings
 
+from fastapi_filter import FilterDepends, with_prefix
+from fastapi_filter.contrib.sqlalchemy import Filter
+from fastapi_pagination import Page
+from fastapi_pagination.ext.sqlalchemy import paginate
+from typing import Optional, List, Annotated
+
 router = APIRouter(
     tags=["Recipes"],
     prefix=settings.url.recipes,
@@ -85,7 +91,64 @@ class RecipeRead(BaseModel):
     model_config = ConfigDict(
         from_attributes=True
     )
+
+# Новая схема для базового рецепта (без связей)
+class RecipeBaseRead(BaseModel):
+    id: int
+    title: str
+    description: Optional[str]
+    cooking_time: int
+    difficulty: int
     
+    model_config = ConfigDict(from_attributes=True)
+
+# Схема для рецепта с кухней
+class RecipeWithCuisineRead(RecipeBaseRead):
+    cuisine: CuisineRead
+    
+    model_config = ConfigDict(from_attributes=True)
+
+# Схема для рецепта с ингредиентами
+class RecipeWithIngredientsRead(RecipeBaseRead):
+    ingredients: List[RecipeIngredientRead]
+    
+    model_config = ConfigDict(from_attributes=True)
+
+# Схема для рецепта со всем (как текущий RecipeRead)
+class RecipeWithAllRead(RecipeBaseRead):
+    cuisine: CuisineRead
+    allergens: List[AllergenRead]
+    ingredients: List[RecipeIngredientRead]
+    
+    model_config = ConfigDict(from_attributes=True)
+
+class RecipeFilter(Filter):
+    """Фильтр для рецептов"""
+    title__ilike: Optional[str] = None  # полнотекстовый поиск по названию
+    ingredient_id: Optional[List[int]] = None  # фильтр по id ингредиентов
+    difficulty: Optional[int] = None  # фильтр по сложности
+    
+    # Сортировка
+    order_by: List[str] = ['-id']  # по умолчанию сортировка по убыванию id
+    
+    class Constants(Filter.Constants):
+        model = Recipe
+        search_model_fields = ['title']  # поля для полнотекстового поиска
+        
+    def filter(self, query):
+        """Переопределяем метод filter для обработки ingredient_id"""
+        query = super().filter(query)
+        
+        # Фильтр по ингредиентам (через связь)
+        if self.ingredient_id:
+            query = (
+                query.join(RecipeIngredient)
+                .where(RecipeIngredient.ingredient_id.in_(self.ingredient_id))
+                .distinct()
+            )
+        
+        return query
+
 # ----- CRUD для рецептов -----
 
 @router.post("", response_model=RecipeRead, status_code=status.HTTP_201_CREATED)
@@ -189,20 +252,30 @@ async def store(
     return recipe_data
 
 
-@router.get("", response_model=list[RecipeRead])
+@router.get("", response_model=Page[RecipeRead])
 async def index(
     session: Annotated[AsyncSession, Depends(db_helper.session_getter)],
-    skip: int = Query(0, ge=0, description="Сколько записей пропустить"),
-    limit: int = Query(10, ge=1, le=100, description="Сколько записей вернуть"),
-    difficulty: Optional[int] = Query(None, ge=1, le=5, description="Фильтр по сложности"),
+    filter: Annotated[RecipeFilter, FilterDepends(RecipeFilter)],
+    page: int = Query(1, ge=1, description="Номер страницы"),
+    size: int = Query(10, ge=1, le=100, description="Размер страницы"),
 ):
     """
-    Получить список всех рецептов с пагинацией и фильтрацией.
+    Получить список всех рецептов с пагинацией, фильтрацией и сортировкой.
     
-    - **skip**: количество записей для пропуска (по умолчанию 0)
-    - **limit**: максимальное количество записей (по умолчанию 10, максимум 100)
-    - **difficulty**: фильтр по сложности (от 1 до 5)
+    Параметры фильтрации:
+    - **title__ilike**: поиск по названию (например, title__ilike=торт)
+    - **ingredient_id**: фильтр по ID ингредиентов (например, ingredient_id=1 или ingredient_id=1,2,3)
+    - **difficulty**: фильтр по сложности (1-5)
+    
+    Параметры сортировки:
+    - **order_by**: поле для сортировки (например, order_by=difficulty или order_by=-difficulty)
+      По умолчанию: order_by=-id (по убыванию id)
+    
+    Пагинация:
+    - **page**: номер страницы (по умолчанию 1)
+    - **size**: размер страницы (по умолчанию 10, максимум 100)
     """
+    # Базовый запрос с загрузкой всех связей
     stmt = (
         select(Recipe)
         .options(
@@ -210,16 +283,23 @@ async def index(
             selectinload(Recipe.allergens),
             selectinload(Recipe.recipe_ingredients).selectinload(RecipeIngredient.ingredient),
         )
-        .order_by(Recipe.id)
     )
-    if difficulty is not None:
-        stmt = stmt.where(Recipe.difficulty == difficulty)
-    stmt = stmt.offset(skip).limit(limit)
-    result = await session.scalars(stmt)
     
-    # преобразование каждого рецепта вручную
-    recipes = []
-    for recipe in result.all():
+    # Применяем фильтрацию
+    stmt = filter.filter(stmt)
+    
+    # Применяем сортировку
+    if filter.order_by:
+        stmt = filter.sort(stmt)
+    else:
+        stmt = stmt.order_by(Recipe.id.desc())
+    
+    # Используем пагинацию от fastapi-pagination
+    result = await paginate(session, stmt)
+    
+    # Преобразуем результат в нужный формат
+    items = []
+    for recipe in result.items:
         recipe_data = {
             "id": recipe.id,
             "title": recipe.title,
@@ -245,9 +325,16 @@ async def index(
                 for ri in recipe.recipe_ingredients
             ]
         }
-        recipes.append(recipe_data)
+        items.append(recipe_data)
     
-    return recipes
+    # Возвращаем объект Page с преобразованными данными
+    return Page(
+        items=items,
+        total=result.total,
+        page=result.page,
+        size=result.size,
+        pages=result.pages
+    )
 
 
 @router.get("/{id}", response_model=RecipeRead)

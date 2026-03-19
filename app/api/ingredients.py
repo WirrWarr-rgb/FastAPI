@@ -1,14 +1,13 @@
-from typing import Annotated, List
+from typing import Annotated, List, Optional
 from fastapi import APIRouter, Depends, status, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload, contains_eager
 from models import db_helper, Ingredient, Recipe, RecipeIngredient
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy.exc import IntegrityError
 from config import settings
-from api.recipes import RecipeRead
-
+from api.recipes import RecipeRead, RecipeBaseRead, RecipeWithCuisineRead, RecipeWithIngredientsRead, RecipeWithAllRead
 router = APIRouter(tags=["Ingredients"], prefix=settings.url.ingredients)
 
 class IngredientRead(BaseModel):
@@ -17,6 +16,20 @@ class IngredientRead(BaseModel):
 
 class IngredientCreate(BaseModel):
     name: str
+
+# Новая схема для динамического выбора полей
+class RecipeDynamicRead(BaseModel):
+    """Динамическая модель для выборочного возврата полей"""
+    id: int
+    title: Optional[str] = None
+    description: Optional[str] = None
+    cooking_time: Optional[int] = None
+    difficulty: Optional[int] = None
+    cuisine: Optional[dict] = None
+    allergens: Optional[List[dict]] = None
+    ingredients: Optional[List[dict]] = None
+    
+    model_config = ConfigDict(from_attributes=True)
 
 @router.post("", response_model=IngredientRead, status_code=status.HTTP_201_CREATED)
 async def store(
@@ -116,59 +129,103 @@ async def destroy(
     await session.commit()
     return None
 
-# задача D: получить все рецепты, содержащие данный ингредиент
-@router.get("/{id}/recipes", response_model=List[RecipeRead])
+@router.get("/{id}/recipes")
 async def get_recipes_by_ingredient(
     session: Annotated[AsyncSession, Depends(db_helper.session_getter)],
     id: int,
+    include: Optional[str] = Query(
+        None, 
+        description="Подгрузить связанные данные: cuisine,ingredients,allergens (через запятую)"
+    ),
+    select: Optional[str] = Query(
+        None,
+        description="Выбрать поля: id,title,description,cooking_time,difficulty (через запятую)"
+    ),
 ):
     """
     Получить все рецепты, содержащие указанный ингредиент.
     
     - **id**: уникальный идентификатор ингредиента
+    - **include**: подгрузка связанных данных (cuisine, ingredients, allergens)
+    - **select**: выбор полей (id, title, description, cooking_time, difficulty)
     
-    Возвращает список рецептов с полной информацией о кухне, аллергенах и ингредиентах.
+    Примеры:
+    - /ingredients/1/recipes - только основные поля
+    - /ingredients/1/recipes?include=cuisine - с кухней
+    - /ingredients/1/recipes?include=cuisine,ingredients - с кухней и ингредиентами
+    - /ingredients/1/recipes?select=title,difficulty - только название и сложность
     """
-    # проверка существование ингредиента
+    # Проверка существования ингредиента
     ingredient = await session.get(Ingredient, id)
     if not ingredient:
         raise HTTPException(status_code=404, detail="Ingredient not found")
 
-    # поиск рецептов через recipe_ingredients с загрузкой всех связей, используем contains_eager для уже присоединенных таблиц
+    # Разбираем параметр include
+    include_list = include.split(',') if include else []
+    include_cuisine = 'cuisine' in include_list
+    include_ingredients = 'ingredients' in include_list
+    include_allergens = 'allergens' in include_list
+    
+    # Разбираем параметр select
+    select_list = select.split(',') if select else None
+    all_fields = not select_list  # если select не указан, возвращаем все поля
+    
+    # Строим базовый запрос
     stmt = (
         select(Recipe)
+        .distinct()
         .join(RecipeIngredient)
         .where(RecipeIngredient.ingredient_id == id)
-        .options(
-            selectinload(Recipe.cuisine),
-            selectinload(Recipe.allergens),
-            contains_eager(Recipe.recipe_ingredients).contains_eager(RecipeIngredient.ingredient),
-        )
-        .distinct()
     )
+    
+    # Добавляем загрузку связей в зависимости от include
+    options = []
+    if include_cuisine:
+        options.append(selectinload(Recipe.cuisine))
+    if include_ingredients:
+        options.append(selectinload(Recipe.recipe_ingredients).selectinload(RecipeIngredient.ingredient))
+    if include_allergens:
+        options.append(selectinload(Recipe.allergens))
+    
+    if options:
+        stmt = stmt.options(*options)
     
     result = await session.execute(stmt)
     recipes = result.unique().scalars().all()
     
-    # ручное преобзование данных в нужный формат
+    # Формируем ответ с учетом include и select
     recipes_data = []
     for recipe in recipes:
-        recipe_data = {
-            "id": recipe.id,
-            "title": recipe.title,
-            "description": recipe.description,
-            "instructions": recipe.instructions,
-            "cooking_time": recipe.cooking_time,
-            "difficulty": recipe.difficulty,
-            "cuisine": {
+        recipe_data = {}
+        
+        # Основные поля (всегда включаем id)
+        recipe_data["id"] = recipe.id
+        
+        # Добавляем поля в соответствии с select
+        if all_fields or 'title' in select_list:
+            recipe_data["title"] = recipe.title
+        if all_fields or 'description' in select_list:
+            recipe_data["description"] = recipe.description
+        if all_fields or 'cooking_time' in select_list:
+            recipe_data["cooking_time"] = recipe.cooking_time
+        if all_fields or 'difficulty' in select_list:
+            recipe_data["difficulty"] = recipe.difficulty
+        
+        # Добавляем связанные данные согласно include
+        if include_cuisine and hasattr(recipe, 'cuisine') and recipe.cuisine:
+            recipe_data["cuisine"] = {
                 "id": recipe.cuisine.id,
                 "name": recipe.cuisine.name
-            },
-            "allergens": [
-                {"id": a.id, "name": a.name} 
+            }
+        
+        if include_allergens and hasattr(recipe, 'allergens'):
+            recipe_data["allergens"] = [
+                {"id": a.id, "name": a.name}
                 for a in recipe.allergens
-            ],
-            "ingredients": [
+            ]
+        
+        if include_ingredients and hasattr(recipe, 'recipe_ingredients'):
+            recipe_data["ingredients"] = [
                 {
                     "id": ri.ingredient.id,
                     "name": ri.ingredient.name,
@@ -176,9 +233,8 @@ async def get_recipes_by_ingredient(
                     "measurement": ri.measurement
                 }
                 for ri in recipe.recipe_ingredients
-                if ri.ingredient_id == id
             ]
-        }
+        
         recipes_data.append(recipe_data)
     
     return recipes_data

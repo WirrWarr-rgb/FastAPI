@@ -1,6 +1,7 @@
 import uvicorn
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
+from fastapi_pagination import add_pagination
 
 from config import settings
 from models import db_helper
@@ -30,6 +31,8 @@ main_app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc",
 )
+
+add_pagination(main_app)
 
 main_app.include_router(api_router)
 
