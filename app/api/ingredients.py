@@ -1,7 +1,7 @@
 from typing import Annotated, List, Optional
 from fastapi import APIRouter, Depends, status, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select as sql_select
 from sqlalchemy.orm import selectinload, contains_eager
 from models import db_helper, Ingredient, Recipe, RecipeIngredient
 from pydantic import BaseModel, ConfigDict
@@ -133,28 +133,9 @@ async def destroy(
 async def get_recipes_by_ingredient(
     session: Annotated[AsyncSession, Depends(db_helper.session_getter)],
     id: int,
-    include: Optional[str] = Query(
-        None, 
-        description="Подгрузить связанные данные: cuisine,ingredients,allergens (через запятую)"
-    ),
-    select: Optional[str] = Query(
-        None,
-        description="Выбрать поля: id,title,description,cooking_time,difficulty (через запятую)"
-    ),
+    include: Optional[str] = Query(None, description="Подгрузить связанные данные: cuisine,ingredients,allergens (через запятую)"),
+    select: Optional[str] = Query(None, description="Выбрать поля: id,title,description,cooking_time,difficulty (через запятую)"),
 ):
-    """
-    Получить все рецепты, содержащие указанный ингредиент.
-    
-    - **id**: уникальный идентификатор ингредиента
-    - **include**: подгрузка связанных данных (cuisine, ingredients, allergens)
-    - **select**: выбор полей (id, title, description, cooking_time, difficulty)
-    
-    Примеры:
-    - /ingredients/1/recipes - только основные поля
-    - /ingredients/1/recipes?include=cuisine - с кухней
-    - /ingredients/1/recipes?include=cuisine,ingredients - с кухней и ингредиентами
-    - /ingredients/1/recipes?select=title,difficulty - только название и сложность
-    """
     # Проверка существования ингредиента
     ingredient = await session.get(Ingredient, id)
     if not ingredient:
@@ -172,7 +153,7 @@ async def get_recipes_by_ingredient(
     
     # Строим базовый запрос
     stmt = (
-        select(Recipe)
+        sql_select(Recipe)  # используем переименованный импорт
         .distinct()
         .join(RecipeIngredient)
         .where(RecipeIngredient.ingredient_id == id)

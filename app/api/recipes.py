@@ -3,9 +3,10 @@ from fastapi import APIRouter, Query, HTTPException, Depends, status
 from pydantic import BaseModel, Field, ConfigDict, field_validator
 from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError
+from fastapi_pagination.ext.sqlalchemy import apaginate
 
 from models import db_helper, Recipe, Cuisine, Allergen, Ingredient, RecipeIngredient, MeasurementEnum, RecipeAllergens, User
 from config import settings
@@ -17,6 +18,7 @@ from fastapi_pagination.ext.sqlalchemy import paginate
 from typing import Optional, List, Annotated
 
 from authentication.fastapi_users import current_active_user
+from authentication.schemas.user import UserRead
 
 router = APIRouter(
     tags=["Recipes"],
@@ -78,14 +80,6 @@ class RecipeUpdate(BaseModel):
     difficulty: Optional[int] = Field(None, ge=1, le=5)
     cuisine_id: Optional[int] = None
 
-class AuthorRead(BaseModel):
-    id: int
-    email: str
-    # можно добавить другие поля, если нужно
-    # is_active: bool
-    
-    model_config = ConfigDict(from_attributes=True)
-
 # чтение рецепта
 class RecipeRead(BaseModel):
     id: int
@@ -97,11 +91,9 @@ class RecipeRead(BaseModel):
     cuisine: CuisineRead
     allergens: List[AllergenRead]
     ingredients: List[RecipeIngredientRead]
-    author: AuthorRead  # !!!новое поле!!!
-    
-    model_config = ConfigDict(
-        from_attributes=True
-    )
+    author: UserRead
+
+    model_config = ConfigDict(from_attributes=True)
 
 # Новая схема для базового рецепта (без связей)
 class RecipeBaseRead(BaseModel):
@@ -135,30 +127,14 @@ class RecipeWithAllRead(RecipeBaseRead):
 
 class RecipeFilter(Filter):
     """Фильтр для рецептов"""
-    title__ilike: Optional[str] = None  # полнотекстовый поиск по названию
-    ingredient_id: Optional[List[int]] = None  # фильтр по id ингредиентов
-    difficulty: Optional[int] = None  # фильтр по сложности
+    title__ilike: Optional[str] = None
+    difficulty: Optional[int] = None
     
-    # Сортировка
-    order_by: List[str] = ['-id']  # по умолчанию сортировка по убыванию id
+    order_by: List[str] = ['-id']
     
     class Constants(Filter.Constants):
         model = Recipe
-        search_model_fields = ['title']  # поля для полнотекстового поиска
-        
-    def filter(self, query):
-        """Переопределяем метод filter для обработки ingredient_id"""
-        query = super().filter(query)
-        
-        # Фильтр по ингредиентам (через связь)
-        if self.ingredient_id:
-            query = (
-                query.join(RecipeIngredient)
-                .where(RecipeIngredient.ingredient_id.in_(self.ingredient_id))
-                .distinct()
-            )
-        
-        return query
+        search_model_fields = ['title']
 
 # ----- CRUD для рецептов -----
 
@@ -260,11 +236,54 @@ async def store(
                 "measurement": ri.measurement
             }
             for ri in recipe_with_relations.recipe_ingredients
-        ]
+        ],
+        "author": {
+            "id": recipe_with_relations.author.id,
+            "email": recipe_with_relations.author.email,
+            "first_name": recipe.author.first_name,
+            "last_name": recipe.author.last_name,
+        } if recipe_with_relations.author else None,
     }
     
     return recipe_data
 
+
+# Функция преобразования одного рецепта
+def recipe_to_dict(recipe: Recipe) -> dict:
+    return {
+        "id": recipe.id,
+        "title": recipe.title,
+        "description": recipe.description,
+        "instructions": recipe.instructions,
+        "cooking_time": recipe.cooking_time,
+        "difficulty": recipe.difficulty,
+        "cuisine": {
+            "id": recipe.cuisine.id,
+            "name": recipe.cuisine.name
+        },
+        "allergens": [
+            {"id": a.id, "name": a.name} for a in recipe.allergens
+        ],
+        "ingredients": [
+            {
+                "id": ri.ingredient.id,
+                "name": ri.ingredient.name,
+                "quantity": ri.quantity,
+                "measurement": ri.measurement
+            }
+            for ri in recipe.recipe_ingredients
+        ],
+        "author": {
+            "id": recipe.author.id,
+            "email": recipe.author.email,
+            "first_name": recipe.author.first_name,
+            "last_name": recipe.author.last_name,
+        } if recipe.author else None,
+    }
+
+# Функция-трансформер для всего списка
+def recipe_transformer(items: List[Recipe]) -> List[dict]:
+    return [recipe_to_dict(item) for item in items]
 
 @router.get("", response_model=Page[RecipeRead])
 async def index(
@@ -272,24 +291,9 @@ async def index(
     filter: Annotated[RecipeFilter, FilterDepends(RecipeFilter)],
     page: int = Query(1, ge=1, description="Номер страницы"),
     size: int = Query(10, ge=1, le=100, description="Размер страницы"),
+    ingredient_id: Optional[str] = Query(None, description="ID ингредиентов через запятую"),
 ):
-    """
-    Получить список всех рецептов с пагинацией, фильтрацией и сортировкой.
-    
-    Параметры фильтрации:
-    - **title__ilike**: поиск по названию (например, title__ilike=торт)
-    - **ingredient_id**: фильтр по ID ингредиентов (например, ingredient_id=1 или ingredient_id=1,2,3)
-    - **difficulty**: фильтр по сложности (1-5)
-    
-    Параметры сортировки:
-    - **order_by**: поле для сортировки (например, order_by=difficulty или order_by=-difficulty)
-      По умолчанию: order_by=-id (по убыванию id)
-    
-    Пагинация:
-    - **page**: номер страницы (по умолчанию 1)
-    - **size**: размер страницы (по умолчанию 10, максимум 100)
-    """
-    # Базовый запрос с загрузкой всех связей
+    # Формируем запрос с подгрузкой связей
     stmt = (
         select(Recipe)
         .options(
@@ -300,60 +304,29 @@ async def index(
         )
     )
     
-    # Применяем фильтрацию
+    # Применяем фильтры и сортировку
     stmt = filter.filter(stmt)
     
-    # Применяем сортировку
+    if ingredient_id:
+        try:
+            ingredient_ids = [int(x.strip()) for x in ingredient_id.split(',') if x.strip()]
+            if ingredient_ids:
+                stmt = (
+                    stmt.join(RecipeIngredient)
+                    .where(RecipeIngredient.ingredient_id.in_(ingredient_ids))
+                    .distinct()
+                )
+        except ValueError:
+            pass
+
     if filter.order_by:
         stmt = filter.sort(stmt)
     else:
         stmt = stmt.order_by(Recipe.id.desc())
     
-    # Используем пагинацию от fastapi-pagination
-    result = await paginate(session, stmt)
-    
-    # Преобразуем результат в нужный формат
-    items = []
-    for recipe in result.items:
-        recipe_data = {
-            "id": recipe.id,
-            "title": recipe.title,
-            "description": recipe.description,
-            "instructions": recipe.instructions,
-            "cooking_time": recipe.cooking_time,
-            "difficulty": recipe.difficulty,
-            "cuisine": {
-                "id": recipe.cuisine.id,
-                "name": recipe.cuisine.name
-            },
-            "allergens": [
-                {"id": a.id, "name": a.name} 
-                for a in recipe.allergens
-            ],
-            "ingredients": [
-                {
-                    "id": ri.ingredient.id,
-                    "name": ri.ingredient.name,
-                    "quantity": ri.quantity,
-                    "measurement": ri.measurement
-                }
-                for ri in recipe.recipe_ingredients
-            ],
-            "author": {
-                "id": recipe.author.id,
-                "email": recipe.author.email,
-            } if recipe.author else None,
-        }
-        items.append(recipe_data)
-    
-    # Возвращаем объект Page с преобразованными данными
-    return Page(
-        items=items,
-        total=result.total,
-        page=result.page,
-        size=result.size,
-        pages=result.pages
-    )
+    # Используем apaginate с transformer
+    paginated_result = await apaginate(session, stmt, transformer=recipe_transformer)
+    return paginated_result
 
 
 @router.get("/{id}", response_model=RecipeRead)
@@ -405,7 +378,13 @@ async def show(
                 "measurement": ri.measurement
             }
             for ri in recipe.recipe_ingredients
-        ]
+        ],
+        "author": {
+            "id": recipe.author.id,
+            "email": recipe.author.email,
+            "first_name": recipe.author.first_name,
+            "last_name": recipe.author.last_name,
+        } if recipe.author else None,
     }
     
     return recipe_data
@@ -420,14 +399,6 @@ async def update(
 ):
     """
     Обновить информацию о рецепте.
-    
-    - **id**: уникальный идентификатор рецепта
-    - **title**: новое название (необязательно)
-    - **description**: новое описание (необязательно)
-    - **instructions**: новая инструкция (необязательно)
-    - **cooking_time**: новое время приготовления (необязательно)
-    - **difficulty**: новая сложность (необязательно)
-    - **cuisine_id**: новый ID кухни (необязательно)
     """
     # получаем рецепт с загруженными связями
     stmt = (
@@ -485,6 +456,7 @@ async def update(
             selectinload(Recipe.cuisine),
             selectinload(Recipe.allergens),
             selectinload(Recipe.recipe_ingredients).selectinload(RecipeIngredient.ingredient),
+            selectinload(Recipe.author),
         )
     )
     result = await session.execute(stmt)
@@ -514,7 +486,13 @@ async def update(
                 "measurement": ri.measurement
             }
             for ri in recipe.recipe_ingredients
-        ]
+        ],
+        "author": {
+            "id": recipe.author.id,
+            "email": recipe.author.email,
+            "first_name": recipe.author.first_name,
+            "last_name": recipe.author.last_name,
+        } if recipe.author else None,
     }
     
     return recipe_data
