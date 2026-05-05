@@ -66,7 +66,7 @@ async def index(
     - **skip**: количество записей для пропуска (по умолчанию 0)
     - **limit**: максимальное количество записей (по умолчанию 100, максимум 100)
     """
-    stmt = select(Ingredient).order_by(Ingredient.id).offset(skip).limit(limit)
+    stmt = sql_select(Ingredient).order_by(Ingredient.id).offset(skip).limit(limit)
     result = await session.scalars(stmt)
     return result.all()
 

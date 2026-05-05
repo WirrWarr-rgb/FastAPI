@@ -24,6 +24,10 @@ class DatabaseConfig(BaseModel):
     future: bool = True
 
 
+class ApiConfig(BaseModel):
+    router_key: str
+
+
 class UrlPrefix(BaseModel):
     prefix: str = "/api"
     cuisines: str = "/cuisines"
@@ -35,7 +39,6 @@ class UrlPrefix(BaseModel):
 
     @property
     def bearer_token_url(self) -> str:
-        # api/auth/login
         parts = (self.prefix, self.auth, "/login")
         path = "".join(parts)
         return path.removeprefix("/")
@@ -64,6 +67,7 @@ class Settings(BaseSettings):
     run: RunConfig = RunConfig()
     url: UrlPrefix = UrlPrefix()
     db: DatabaseConfig
+    api: ApiConfig
     base_dir: Path = BASE_DIR
     auth: AuthConfig = AuthConfig()
     access_token: AccessToken

@@ -20,6 +20,10 @@ from typing import Optional, List, Annotated
 from authentication.fastapi_users import current_active_user
 from authentication.schemas.user import UserRead
 
+from pydantic import BaseModel
+from tasks.generate_recipe import generate_recipe_task
+from sqlalchemy.ext.asyncio import AsyncSession
+
 router = APIRouter(
     tags=["Recipes"],
     prefix=settings.url.recipes,
@@ -135,6 +139,19 @@ class RecipeFilter(Filter):
     class Constants(Filter.Constants):
         model = Recipe
         search_model_fields = ['title']
+
+# !!!!!!!!!!!!!!!!!!!ДЛЯ 5 ПРАКТИКИ!!!!!!!!!!!!!!!!!!!!!!
+
+class RecipeGenerateRequest(BaseModel):
+    """Схема запроса на генерацию рецепта"""
+    prompt: str = Field(..., min_length=10, description="Описание желаемого рецепта")
+
+
+class RecipeGenerateResponse(BaseModel):
+    """Схема ответа на запрос генерации"""
+    status: str
+
+# !!!!!!!!!!!!!!!!!!!ДЛЯ 5 ПРАКТИКИ!!!!!!!!!!!!!!!!!!!!!!
 
 # ----- CRUD для рецептов -----
 
@@ -530,3 +547,25 @@ async def destroy(
             detail="Cannot delete recipe because it is referenced by other records."
         )
     return None
+
+# !!!!!! Новый эндпоинт для 5 практики
+
+@router.post("/generate", response_model=RecipeGenerateResponse)
+async def generate_recipe(
+    request: RecipeGenerateRequest,
+    current_user: Annotated[User, Depends(current_active_user)],
+):
+    """
+    Запустить асинхронную генерацию рецепта через LLM.
+    
+    - **prompt**: текстовое описание желаемого рецепта
+    
+    Задача ставится в очередь и выполняется в фоне.
+    """
+    # Отправляем задачу в очередь
+    await generate_recipe_task.kiq(
+        prompt=request.prompt,
+        user_id=current_user.id,
+    )
+    
+    return RecipeGenerateResponse(status="Генерация началась")

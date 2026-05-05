@@ -6,26 +6,37 @@ from fastapi_pagination import add_pagination
 from config import settings
 from models import db_helper
 from api import router as api_router
+from task_queue import broker
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
     Управление жизненным циклом приложения.
-    Здесь можно добавить код при запуске и остановке.
     """
     # Startup
-    print("Запуск приложения...")
+    print("🚀 Запуск приложения...")
+    
+    # запускаем брокер, если это не воркер
+    if not broker.is_worker_process:
+        await broker.startup()
+    
     yield
+    
     # Shutdown
-    print("Остановка приложения...")
+    print("🛑 Остановка приложения...")
     await db_helper.dispose()
-    print("Ресурсы освобождены")
+    
+    # останавливаем брокер
+    if not broker.is_worker_process:
+        await broker.shutdown()
+    
+    print("✅ Ресурсы освобождены")
 
 
 main_app = FastAPI(
     title="API для рецептов",
-    description="API для управления рецептами с примерами из документации FastAPI",
+    description="API для управления рецептами с AI-генерацией",
     version="1.0.0",
     lifespan=lifespan,
     docs_url="/docs",
@@ -38,7 +49,7 @@ main_app.include_router(api_router)
 
 
 if __name__ == "__main__":
-    print(f"Документация: http://{settings.run.host}:{settings.run.port}/docs")
+    print(f"📚 Документация: http://{settings.run.host}:{settings.run.port}/docs")
     uvicorn.run(
         "main:main_app",
         host=settings.run.host,
